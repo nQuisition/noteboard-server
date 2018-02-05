@@ -10,75 +10,76 @@ exports.signUp = (req, res, next) => {
         .exec()
         .then(user => {
             if(user.length >= 1) {
-                return errorController.conflict('Email exists', res);
-            } else {
-                bcrypt.hash(req.body.password, 10, (err, hash) => {
-                    if(err) {
-                        return errorController.generic(err, res);
-                    } else {
-                        const user = new User({
-                            _id: new mongoose.Types.ObjectId,
-                            email: req.body.email,
-                            name: req.body.name,
-                            password: hash
-                        });
-                        user.save()
-                            .then(result => {
-                                console.log(result);
-                                res.status(201).json({
-                                    message: 'User successfully created'
-                                });
-                            })
-                            .catch(err => {
-                                console.log(err);
-                                errorController.generic(err, res);
-                            });
-                    }
-                });
+                throw new Error('conflict');
             }
+            return bcrypt.hash(req.body.password, 10);
+        })
+        .then(hash => {
+            const user = new User({
+                _id: new mongoose.Types.ObjectId,
+                email: req.body.email,
+                name: req.body.name,
+                password: hash
+            });
+            return user.save();
+        })
+        .then(result => {
+            console.log(result);
+            res.status(201).json({
+                message: 'User successfully created'
+            });
         })
         .catch(err => {
             console.log(err);
-            errorController.generic(err, res);
+            if(err.message === 'conflict') {
+                errorController.conflict('Email exists', res);
+            } else {
+                errorController.generic(err, res);
+            }
         });
 };
 
 exports.login = (req, res, next) => {
+    let resultUser = null;
     User.find({ email: req.body.email })
         //.select('name, email, password, role, _id')
         .exec()
         .then(user => {
             if(user.length < 1) {
-                return errorController.authFailed(res);
+                throw new Error('authFailed');
             }
-            bcrypt.compare(req.body.password, user[0].password, (err, result) => {
-                if(err) {
-                    return errorController.authFailed(res);
+            resultUser = user[0];
+            return bcrypt.compare(req.body.password, user[0].password);
+        })
+        .then(result => {
+            if(!result) {
+                throw new Error('authFailed');
+            }
+            const token = jwt.sign({
+                email: resultUser.email,
+                name: resultUser.name,
+                role: resultUser.role,
+                userId: resultUser._id
+            }, process.env.JWT_KEY, { expiresIn: '1h' });
+            
+            res.status(200).json({
+                message: 'Authentication successful',
+                token: token,
+                user: {
+                    name: resultUser.name,
+                    email: resultUser.email,
+                    role: resultUser.role,
+                    _id: resultUser._id
                 }
-                if(result) {
-                    const token = jwt.sign({
-                        email: user[0].email,
-                        name: user[0].name,
-                        role: user[0].role,
-                        userId: user[0]._id
-                    }, process.env.JWT_KEY, { expiresIn: '1h' });
-                    return res.status(200).json({
-                        message: 'Authentication successful',
-                        token: token,
-                        user: {
-                            name: user[0].name,
-                            email: user[0].email,
-                            role: user[0].role,
-                            _id: user[0]._id
-                        }
-                    });
-                }
-                return errorController.authFailed(res);
             });
         })
         .catch(err => {
             console.log(err);
-            errorController.generic(err, res);
+            if(err.message === 'authFailed') {
+                errorController.authFailed(res);
+            } else {
+                errorController.generic(err, res);
+            }
         });
 };
 
