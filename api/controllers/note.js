@@ -1,91 +1,150 @@
-const mongoose = require('mongoose');
-
-const Note = require('../models/note');
+const db = require('../../db/models');
+const Op = db.Sequelize.Op;
+const Note = db.Note;
+const Board = db.Board;
 
 const errorController = require('./error');
 
 exports.getOwn = (req, res, next) => {
     const userId = req.userData.userId;
-    Note.find({ owner: userId }).exec()
-        .then(result => {
-            res.status(200).json({
-                count: result.length,
-                notes: result
-            });
-        })
-        .catch(err => {
-            console.log(err);
-            errorController.generic(err, res);
+    Note.findAll({
+        where: {
+            ownerId: userId
+        }
+    })
+    .then(result => {
+        const notes = result.map(note => note.toJSON());
+        res.status(200).json({
+            count: notes.length,
+            notes: notes
         });
+    })
+    .catch(err => {
+        console.log(err);
+        errorController.generic(err, res);
+    });
 };
 
 exports.postOwn = (req, res, next) => {
     const userId = req.userData.userId;
     //Trust the middleware to ensure userid exists?
-    const note = new Note({
-        _id: new mongoose.Types.ObjectId,
-        title: req.body.title,
-        body: req.body.body?req.body.body:'',
-        owner: userId
-    });
-    note.save()
-        .then(result => {
-            console.log(result);
-            res.status(201).json({
-                message: 'Note successfully created',
-                note: result
-            });
-        })
-        .catch(err => {
-            console.log(err);
-            errorController.generic(err, res);
+    let note = null;
+
+    Board.findOne({
+        where: {
+            def: true,
+            ownerId: userId
+        }
+    })
+    .then(result => {
+        if(!result) {
+            throw new Error('notFound');
+        }
+        boardId = result.toJSON().id;
+        note = Note.build({
+            title: req.body.title,
+            body: req.body.body,
+            ownerId: userId,
+            ownerBoardId: boardId
         });
+        return note.save();
+    })
+    .then(result => {
+        note = result.toJSON();
+        console.log(note);
+        res.status(201).json({
+            message: 'Note successfully created',
+            note: note
+        });
+    })
+    .catch(err => {
+        console.log(err);
+        if(err.message === 'notFound') {
+            errorController.notFound(res);
+        } else {
+            errorController.generic(err, res);
+        }
+    });
 };
 
 exports.deleteOwn = (req, res, next) => {
     const userId = req.userData.userId;
-    const noteId = req.body.noteid;
+    const noteId = req.body.noteId;
     let resultNote = null;
-    Note.findOne({ _id:noteId, owner: userId }).exec()
-        .then(result => {
-            if(!result) {
-                throw new Error('notFound');
-            }
-            resultNote = result;
-            return Note.remove({ _id:noteId })
-        })
-        .then(result => {
-            res.status(200).json({
-                message: "Note successfully deleted",
-                note: resultNote
-            });
-        })
-        .catch(err => {
-            console.log(err);
-            if(err.message === 'notFound') {
-                errorController.notFound(res);
-            } else {
-                errorController.generic(err, res);
+    Note.findOne({
+        where: {
+            id: noteId,
+            ownerId: userId
+        }
+    })
+    .then(result => {
+        if(!result) {
+            throw new Error('notFound');
+        }
+        resultNote = result.toJSON();
+        return Note.destroy({
+            where: {
+                id: noteId
             }
         });
+    })
+    .then(result => {
+        res.status(200).json({
+            message: "Note successfully deleted",
+            note: resultNote
+        });
+    })
+    .catch(err => {
+        console.log(err);
+        if(err.message === 'notFound') {
+            errorController.notFound(res);
+        } else {
+            errorController.generic(err, res);
+        }
+    });
 };
 
 exports.updateOwn = (req, res, next) => {
     const userId = req.userData.userId;
-    const noteId = req.body.noteid;
-    Note.findOneAndUpdate({ _id:noteId, owner: userId }, { $set: req.body.note }, { new: true }).exec()
-        .then(result => {
-            console.log(result);
-            if(!result) {
-                return errorController.notFound(res);
+    const noteId = req.body.noteId;
+    const params = {};
+    //TODO better way?
+    if(req.body.note.title) {
+        params.title = req.body.note.title
+    }
+    if(req.body.note.body) {
+        params.body = req.body.note.body
+    }
+
+    Note.update(params, {
+        where: {
+            id: noteId,
+            ownerId: userId
+        }
+    })
+    .then(result => {
+        console.log(result);
+        if(result[0] <= 0) {
+            throw new Error('notFound');
+        }
+        return Note.findOne({
+            where: {
+                id: noteId
             }
-            res.status(200).json({
-                message: "Note successfully patched",
-                note: result
-            });
         })
-        .catch(err => {
-            console.log(err);
-            errorController.generic(err, res);
+    })
+    .then(result => {
+        res.status(200).json({
+            message: "Note successfully patched",
+            note: result.toJSON()
         });
+    })
+    .catch(err => {
+        console.log(err);
+        if(err.message === 'notFound') {
+            errorController.notFound(res);
+        } else {
+            errorController.generic(err, res);
+        }
+    });
 };
